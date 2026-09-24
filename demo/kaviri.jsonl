@@ -1,0 +1,43 @@
+{"op":"navigate","url":"http://127.0.0.1:8765/"}
+{"op":"wait","selector":".cover button","timeout_ms":30000}
+{"op":"wait","ms":1200}
+{"op":"start_recording"}
+{"op":"wait","ms":800}
+{"op":"hover","selector":".cover button","ms":700}
+{"op":"click","selector":".cover button"}
+{"op":"wait","ms":2500}
+{"op":"hover","selector":".grid > .panel:nth-child(1) canvas","at":[0.35,0.4],"ms":700}
+{"op":"hover","selector":".grid > .panel:nth-child(1) canvas","at":[0.6,0.7],"ms":900}
+{"op":"hover","selector":".grid > .panel:nth-child(1) canvas","at":[0.45,0.3],"ms":700}
+{"op":"click","selector":".grid > .panel:nth-child(1) canvas"}
+{"op":"wait","ms":1800}
+{"op":"hover","selector":".grid > .panel:nth-child(2) canvas","at":[0.25,0.3],"ms":700}
+{"op":"hover","selector":".grid > .panel:nth-child(2) canvas","at":[0.75,0.6],"ms":900}
+{"op":"click","selector":".grid > .panel:nth-child(2) canvas"}
+{"op":"wait","ms":1200}
+{"op":"hover","selector":".grid > .panel:nth-child(3) canvas","at":[0.3,0.5],"ms":700}
+{"op":"click","selector":".grid > .panel:nth-child(3) canvas"}
+{"op":"wait","ms":1500}
+{"op":"hover","selector":".grid > .panel:nth-child(4) canvas","at":[0.2,0.3],"ms":700}
+{"op":"hover","selector":".grid > .panel:nth-child(4) canvas","at":[0.8,0.4],"ms":1000}
+{"op":"hover","selector":".grid > .panel:nth-child(4) canvas","at":[0.5,0.8],"ms":800}
+{"op":"click","selector":".grid > .panel:nth-child(4) canvas"}
+{"op":"wait","ms":1000}
+{"op":"hover","selector":".grid > .panel:nth-child(5) canvas","ms":600}
+{"op":"click","selector":".grid > .panel:nth-child(5) canvas"}
+{"op":"wait","ms":300}
+{"op":"click","selector":".grid > .panel:nth-child(5) canvas"}
+{"op":"wait","ms":300}
+{"op":"click","selector":".grid > .panel:nth-child(5) canvas"}
+{"op":"wait","ms":300}
+{"op":"click","selector":".grid > .panel:nth-child(5) canvas"}
+{"op":"wait","ms":300}
+{"op":"click","selector":".grid > .panel:nth-child(5) canvas"}
+{"op":"wait","ms":2200}
+{"op":"hover","selector":".grid > .panel:nth-child(6) canvas","at":[0.7,0.35],"ms":800}
+{"op":"click","selector":".grid > .panel:nth-child(6) canvas"}
+{"op":"wait","ms":700}
+{"op":"hover","selector":".grid > .panel:nth-child(6) canvas","at":[0.3,0.3],"ms":700}
+{"op":"click","selector":".grid > .panel:nth-child(6) canvas"}
+{"op":"wait","ms":4000}
+{"op":"stop_recording"}

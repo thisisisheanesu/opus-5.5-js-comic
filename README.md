@@ -13,3 +13,17 @@ Open `index.html` in a browser and click **Open the comic**. The page has no sou
 
 All art is procedural canvas drawing. There are no image files.
 The only external resource is two Google Fonts, and the page falls back to system fonts if they don't load.
+
+## Recording a demo
+
+`demo/kaviri.jsonl` films the comic with [kaviri](https://github.com/thisisisheanesu/kaviri): it opens the cover,
+lets the pages draw, sweeps the pointer across each panel so the hover reactions play, then clicks through the fight
+and the finale. Serve the folder and record at any size:
+
+```
+python3 -m http.server 8765 --bind 127.0.0.1 &
+kaviri record --slowmo 8 --preset desktop --script demo/kaviri.jsonl --out spiderman-desktop.mp4
+```
+
+`--slowmo 8` matters here. Headless Chromium paints these canvases in software at about 5 frames a second, and
+slowing the page's clock while it is filmed brings that to about 30. Other presets: `landscape`, `square`, `tiktok`.
