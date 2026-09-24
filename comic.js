@@ -1272,7 +1272,7 @@ function injectHead() {
   .panel canvas{display:block;width:100%;height:auto}
   .foot{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:12px;font-size:14px}
   .foot b{font-family:${BANG};font-weight:400;font-size:18px;letter-spacing:1px}
-  .bar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;align-items:center;gap:10px;padding:10px 14px;
+  .bar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;align-items:center;gap:10px;padding:10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
     background:#111;color:#fff;border-top:4px solid #e8262d}
   .bar button{font-family:${BANG};font-size:19px;letter-spacing:1px;padding:5px 12px;background:#ffd23f;color:#111;
     border:3px solid #fff;box-shadow:3px 3px 0 #e8262d;cursor:pointer;white-space:nowrap}
