@@ -1,10 +1,9 @@
 /*
- * THE AMAZING SPIDER-MAN — a live, singing, evolving comic book.
- * 100% JavaScript: every panel is drawn procedurally on <canvas>, every note
- * is synthesised with the Web Audio API (including the "singing" voice, which
- * is a formant synthesiser), and the page layout itself is built from JS.
+ * THE AMAZING SPIDER-MAN — a live, evolving comic book.
+ * 100% JavaScript: every panel is drawn procedurally on <canvas>, and the page
+ * layout itself is built from JS. The page is silent.
  *
- * Timeline (synced to the theme song):
+ * Timeline (paced by the theme song's beat, shown as lyrics in the bottom bar):
  *   pencil sketch  →  inked black & white  →  flat colour  →  Ben-Day halftone "POP!"
  * Hover a panel to make it react; click to splash colour, shoot webs, throw punches.
  */
@@ -645,154 +644,12 @@ function particles(p, x, y, n, kind, o = {}) {
 }
 
 /* ======================================================================
- * Audio: synth band + formant "singer"
+ * Theme-song timing. The comic is silent; its drawing stages and the
+ * lyrics bar follow the song's beat (150 bpm).
  * ==================================================================== */
-const Sound = (() => {
-  let ctx = null, master, revSend, noise, songBus = null, muted = false;
-  let songT0 = -1;
-  const BPM = 150, SPB = 60 / BPM;
-  const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
-
-  function init() {
-    if (ctx) return ctx;
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return null;
-    ctx = new AC();
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -16; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.2;
-    master = ctx.createGain(); master.gain.value = 0.85;
-    master.connect(comp); comp.connect(ctx.destination);
-    const len = ctx.sampleRate * 2, ir = ctx.createBuffer(2, len, ctx.sampleRate);
-    for (let ch = 0; ch < 2; ch++) {
-      const d = ir.getChannelData(ch);
-      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2);
-    }
-    const rev = ctx.createConvolver(); rev.buffer = ir;
-    revSend = ctx.createGain(); revSend.gain.value = 0.25;
-    revSend.connect(rev); rev.connect(master);
-    noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
-    const nd = noise.getChannelData(0);
-    for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
-    return ctx;
-  }
-  const resume = () => ctx && ctx.state !== 'running' && ctx.resume();
-
-  /* ---- building blocks ---- */
-  const G = (v = 1) => { const g = ctx.createGain(); g.gain.value = v; return g; };
-  const F = (type, f, q = 1) => { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b; };
-  function O(type, freq, t, stop) {
-    const o = ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(freq, t);
-    o.start(t); o.stop(stop); return o;
-  }
-  function N(t, stop) {
-    const s = ctx.createBufferSource(); s.buffer = noise; s.loop = true;
-    s.start(t, Math.random() * 1.5); s.stop(stop); return s;
-  }
-  function env(g, t, a, peak, hold, rel) {
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(peak, t + a);
-    g.gain.setValueAtTime(peak, t + a + hold);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + a + hold + rel);
-  }
-  function hiss(out, t, dur, freq, vol) {
-    const s = N(t, t + dur + 0.05), f = F('highpass', freq, 0.8), g = G(0);
-    env(g, t, 0.01, vol, dur * 0.4, dur * 0.6);
-    s.connect(f); f.connect(g); g.connect(out);
-  }
-
-  /* ---- the singer: sawtooth "vocal folds" through vowel formant filters ---- */
-  const VOW = {
-    a: [730, 1090, 2440], ae: [660, 1720, 2410], e: [530, 1840, 2480], i: [270, 2290, 3010],
-    I: [390, 1990, 2550], o: [570, 840, 2410], u: [300, 870, 2240], uh: [640, 1190, 2390], er: [490, 1350, 1690],
-  };
-  function sing(out, t, dur, midi, vowel, prev, syl) {
-    const f = mtof(midi), end = t + dur;
-    const [v1, v2] = vowel.split('>'), A = VOW[v1], B = v2 ? VOW[v2] : null;
-    const g = G(0);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(1, t + 0.04);
-    g.gain.linearRampToValueAtTime(0.8, Math.max(t + 0.06, end - 0.04));
-    g.gain.exponentialRampToValueAtTime(0.0001, end + 0.09);
-    const lfo = O('sine', 5.6, t, end + 0.12), lg = G(0);
-    lg.gain.setValueAtTime(0, t);
-    lg.gain.linearRampToValueAtTime(0, t + Math.min(0.18, dur * 0.4));
-    lg.gain.linearRampToValueAtTime(f * 0.02, t + Math.min(0.5, dur));
-    lfo.connect(lg);
-    for (const dt of [0, -7, 7]) {
-      const o = O('sawtooth', prev ? mtof(prev) : f, t, end + 0.12);
-      o.detune.value = dt;
-      o.frequency.exponentialRampToValueAtTime(f, t + 0.07);
-      lg.connect(o.frequency);
-      o.connect(g);
-    }
-    const vo = G(0.9);
-    const gains = [1, 0.6, 0.32], bws = [80, 100, 140];
-    A.forEach((Fq, k) => {
-      const b = F('bandpass', Fq, Fq / bws[k]);
-      if (B) {
-        b.frequency.setValueAtTime(Fq, t + dur * 0.45);
-        b.frequency.linearRampToValueAtTime(B[k], t + dur * 0.85);
-      }
-      const bg = G(gains[k]);
-      g.connect(b); b.connect(bg); bg.connect(vo);
-    });
-    const body = F('lowpass', Math.min(f * 3, 1800), 0.7), bg = G(0.06);
-    g.connect(body); body.connect(bg); bg.connect(vo);
-    vo.connect(out);
-    // consonants
-    const c = syl.toLowerCase().replace(/[^a-z]/g, '');
-    if (/^(s|sh|ch|f|th|h|wh)/.test(c)) hiss(out, t - 0.05, 0.07, /^(s|sh|ch)/.test(c) ? 5200 : 2400, 0.22);
-    else if (/^(t|k|p|c)/.test(c)) hiss(out, t - 0.015, 0.025, 2800, 0.3);
-    if (/(s|z)$/.test(c)) hiss(out, end - 0.05, 0.09, 5500, 0.16);
-    else if (/(t|d|k)$/.test(c)) hiss(out, end - 0.02, 0.02, 3000, 0.18);
-  }
-
-  /* ---- band ---- */
-  function brass(out, t, dur, notes, vol = 0.1) {
-    const lp = F('lowpass', 700, 2.5), g = G(0);
-    lp.frequency.setValueAtTime(700, t);
-    lp.frequency.linearRampToValueAtTime(3400, t + 0.045);
-    lp.frequency.exponentialRampToValueAtTime(1200, t + dur + 0.06);
-    env(g, t, 0.02, vol, dur, 0.14);
-    for (const m of notes) for (const dt of [-9, 9]) {
-      const o = O('sawtooth', mtof(m), t, t + dur + 0.3); o.detune.value = dt; o.connect(lp);
-    }
-    lp.connect(g); g.connect(out);
-  }
-  function bass(out, t, dur, m) {
-    const lp = F('lowpass', 480, 3), g = G(0);
-    env(g, t, 0.008, 0.34, dur * 0.4, dur * 0.7);
-    O('sawtooth', mtof(m), t, t + dur + 0.2).connect(lp);
-    O('sine', mtof(m), t, t + dur + 0.2).connect(g);
-    lp.connect(g); g.connect(out);
-  }
-  function kick(out, t, v = 0.9) {
-    const o = O('sine', 150, t, t + 0.4), g = G(0);
-    o.frequency.exponentialRampToValueAtTime(42, t + 0.13);
-    env(g, t, 0.004, v, 0.02, 0.3);
-    o.connect(g); g.connect(out);
-  }
-  function snare(out, t, v = 0.32) {
-    const s = N(t, t + 0.25), f = F('highpass', 1300), g = G(0);
-    env(g, t, 0.003, v, 0.01, 0.15);
-    s.connect(f); f.connect(g); g.connect(out);
-    const o = O('triangle', 190, t, t + 0.12), g2 = G(0);
-    env(g2, t, 0.003, v * 0.6, 0.01, 0.07);
-    o.connect(g2); g2.connect(out);
-  }
-  function hat(out, t, v = 0.06) {
-    const s = N(t, t + 0.08), f = F('highpass', 7500), g = G(0);
-    env(g, t, 0.002, v, 0.005, 0.04);
-    s.connect(f); f.connect(g); g.connect(out);
-  }
-  function crash(out, t, v = 0.2, dur = 1.6) {
-    const s = N(t, t + dur + 0.1), f = F('highpass', 4200), g = G(0);
-    env(g, t, 0.005, v, 0.05, dur);
-    s.connect(f); f.connect(g); g.connect(out);
-  }
-
-  /* ---- the theme song (original melody & lyrics) ----
-   * [syllable, vowel, midi, beats]; "~" joins syllables, trailing "-" is a hyphen; null vowel = rest */
+const Song = (() => {
+  const SPB = 60 / 150;
+  /* [syllable, vowel, midi, beats]; "~" joins syllables, trailing "-" is a hyphen; null vowel = rest */
   const LINES = [
     [['Spi~', 'a>i', 67, .5], ['der-', 'er', 70, .5], ['Man,', 'ae', 74, 1], ['Spi~', 'a>i', 72, .5], ['der-', 'er', 69, .5], ['Man,', 'ae', 65, 1],
      ['swing~', 'I', 67, .5], ['ing', 'I', 69, .5], ['high', 'a>i', 70, .5], ['a~', 'uh', 72, .5], ['bove', 'uh', 74, .5], ['the', 'uh', 72, .5], ['town!', 'a>u', 70, 1]],
@@ -805,177 +662,10 @@ const Sound = (() => {
      ['friend~', 'e', 67, .5], ['ly', 'i', 69, .5], ['he~', 'i', 70, .5], ['ro,', 'o', 72, .5], ['here', 'i', 74, .5], ['for', 'o', 66, .5], ['you!', 'u', 67, 1],
      ['Spi~', 'a>i', 74, .5], ['der-', 'er', 78, .5], ['MAAAN!', 'ae', 79, 5], ['', null, 0, 2]],
   ];
-  const CH = {
-    Gm: { b: 43, t: [55, 58, 62] }, F: { b: 41, t: [53, 57, 60] }, Cm: { b: 36, t: [55, 60, 63] },
-    D: { b: 38, t: [54, 57, 62] }, Eb: { b: 39, t: [55, 58, 63] }, Bb: { b: 46, t: [53, 58, 62] }, G: { b: 43, t: [55, 59, 62] },
-  };
-  const PROG = 'Gm F Gm Gm Gm F Cm D Eb Bb Bb F Bb Eb Bb D Gm F Eb D G G G G'.split(' ');
   const VOCAL_START = 8, SONG_BEATS = 58;
-
-  // syllable timeline for the karaoke bar
   const SYL = [];
   { let b = 0; LINES.forEach((line, li) => line.forEach((n, si) => { if (n[1]) SYL.push({ li, si, b0: b, dur: n[3] }); b += n[3]; })); }
-
-  /* ---- the words: the browser's speech voice sings each phrase in time,
-   * pitched to the tune, over the formant "choir" voice ---- */
-  const PHRASES = [];
-  {
-    let b = 0;
-    LINES.forEach(line => line.forEach(([syl, vow, m, d]) => {
-      if (vow) {
-        const k = Math.floor(b / 4);
-        let ph = PHRASES[PHRASES.length - 1];
-        if (!ph || ph.k !== k) { ph = { k, b0: b, b1: b, say: '', syl: 0, top: 0 }; PHRASES.push(ph); }
-        ph.say += syl.endsWith('~') ? syl.slice(0, -1) : syl.endsWith('-') ? syl : syl + ' ';
-        ph.syl++; ph.b1 = b + d; ph.top = Math.max(ph.top, m);
-      }
-      b += d;
-    }));
-    PHRASES.forEach(ph => { ph.say = ph.say.replace('MAAAN', 'Man').trim(); });
-  }
-  const canSpeak = 'speechSynthesis' in window && typeof SpeechSynthesisUtterance === 'function';
-  let voice = null, speechTimers = [];
-  function pickVoice() {
-    const vs = speechSynthesis.getVoices();
-    voice = vs.find(v => /^en[-_]US/i.test(v.lang) && /Google|Samantha|Aria|Jenny|Guy|Alex/i.test(v.name)) ||
-      vs.find(v => /^en[-_]US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
-  }
-  if (canSpeak) { pickVoice(); speechSynthesis.addEventListener?.('voiceschanged', pickVoice); }
-  function stopSpeech() {
-    speechTimers.forEach(clearTimeout); speechTimers = [];
-    if (canSpeak) try { speechSynthesis.cancel(); } catch (e) { /* ignore */ }
-  }
-  function scheduleSpeech(t0) {
-    if (!canSpeak) return;
-    // unlock speech inside the click (iOS/Safari need this)
-    try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch (e) { /* ignore */ }
-    for (const ph of PHRASES) {
-      const dur = (ph.b1 - ph.b0) * SPB, last = ph === PHRASES[PHRASES.length - 1];
-      const at = (t0 + (VOCAL_START + ph.b0) * SPB - ctx.currentTime) * 1000 - 80;
-      speechTimers.push(setTimeout(() => {
-        if (muted) return;
-        const u = new SpeechSynthesisUtterance(ph.say);
-        if (voice) u.voice = voice;
-        u.lang = 'en-US';
-        u.rate = last ? 0.75 : clamp(ph.syl / (dur * 4.2), 0.75, 1.6);
-        u.pitch = clamp(0.8 + ((ph.top - 65) / 14) * 0.9, 0.5, 2);
-        u.volume = 1;
-        speechSynthesis.cancel();
-        speechSynthesis.speak(u);
-      }, Math.max(0, at)));
-    }
-  }
-
-  function playSong() {
-    if (!init()) return null;
-    resume();
-    stopSong();
-    const bus = G(1); bus.connect(master); bus.connect(revSend);
-    songBus = bus;
-    const t0 = ctx.currentTime + 0.15, B = b => t0 + b * SPB;
-    // --- intro: brass fanfare ---
-    const intro = [[0, 'Gm', 1.2, 0.13], [1.5, 'Gm', 0.3], [2.5, 'Gm', 0.3], [3, 'Gm', 0.6], [4, 'F', 1.2, 0.13], [5.5, 'F', 0.3], [6, 'D', 1.6, 0.14]];
-    intro.forEach(([b, ch, d, v]) => brass(bus, B(b), d * SPB, CH[ch].t.map(m => m + 12), v || 0.1));
-    ['Gm', 'Gm', 'F', 'D'].forEach((ch, i) => { bass(bus, B(i * 2), SPB * 0.9, CH[ch].b); bass(bus, B(i * 2 + 1), SPB * 0.9, CH[ch].b + 12); });
-    crash(bus, B(0), 0.16);
-    // --- drums ---
-    for (let b = 0; b < 56; b += 0.5) {
-      const inBar = b % 4;
-      hat(bus, B(b), inBar % 1 ? 0.04 : 0.065);
-      if (b >= 6 && b < 8) continue;
-      if (inBar === 0 || inBar === 2.5) kick(bus, B(b));
-      if (inBar === 1 || inBar === 3) snare(bus, B(b));
-    }
-    for (let k = 0; k < 8; k++) snare(bus, B(6 + k * 0.25), 0.12 + k * 0.03);
-    // --- verse backing ---
-    PROG.forEach((name, i) => {
-      const b = VOCAL_START + i * 2, ch = CH[name];
-      bass(bus, B(b), SPB * 0.9, ch.b);
-      bass(bus, B(b + 1), SPB * 0.9, ch.b + 7);
-      if (i < 20) { brass(bus, B(b + 0.5), SPB * 0.22, ch.t, 0.045); brass(bus, B(b + 1.5), SPB * 0.22, ch.t, 0.045); }
-    });
-    brass(bus, B(48), SPB * 6, CH.G.t.map(m => m + 12), 0.08);
-    crash(bus, B(48), 0.2, 2.5);
-    brass(bus, B(56), SPB * 1.5, [...CH.G.t, 67], 0.14);
-    kick(bus, B(56), 1); crash(bus, B(56), 0.25, 2.5); bass(bus, B(56), SPB * 2, 31);
-    // --- vocals ---
-    let b = VOCAL_START, prev = null;
-    for (const line of LINES) for (const [syl, vow, m, d] of line) {
-      if (!vow) { prev = null; b += d; continue; }
-      sing(bus, B(b), d * SPB * 0.94, m, vow, prev, syl);
-      prev = m; b += d;
-    }
-    songT0 = t0;
-    scheduleSpeech(t0);
-    return t0;
-  }
-  function stopSong() {
-    stopSpeech();
-    if (!songBus) return;
-    const old = songBus; songBus = null;
-    old.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
-    setTimeout(() => old.disconnect(), 400);
-    songT0 = -1;
-  }
-  const songBeat = () => (ctx && songT0 >= 0 ? (ctx.currentTime - songT0) / SPB : null);
-
-  /* ---- sound effects ---- */
-  const sfx = {
-    thwip() {
-      if (!init()) return; const t = ctx.currentTime;
-      const s = N(t, t + 0.25), f = F('bandpass', 900, 3), g = G(0);
-      f.frequency.setValueAtTime(900, t); f.frequency.exponentialRampToValueAtTime(5000, t + 0.1);
-      env(g, t, 0.005, 0.6, 0.03, 0.14); s.connect(f); f.connect(g); g.connect(master);
-      const o = O('sine', 1500, t, t + 0.2), g2 = G(0);
-      o.frequency.exponentialRampToValueAtTime(260, t + 0.14);
-      env(g2, t, 0.004, 0.2, 0.02, 0.12); o.connect(g2); g2.connect(master);
-    },
-    pow() {
-      if (!init()) return; const t = ctx.currentTime;
-      kick(master, t, 1.1);
-      const s = N(t, t + 0.35), f = F('lowpass', 1600), g = G(0);
-      env(g, t, 0.002, 0.7, 0.02, 0.22); s.connect(f); f.connect(g); g.connect(master);
-    },
-    laser() {
-      if (!init()) return; const t = ctx.currentTime;
-      const o = O('sawtooth', 2200, t, t + 0.45), o2 = O('square', 2230, t, t + 0.45), f = F('lowpass', 4000), g = G(0);
-      o.frequency.exponentialRampToValueAtTime(110, t + 0.4); o2.frequency.exponentialRampToValueAtTime(95, t + 0.4);
-      env(g, t, 0.005, 0.16, 0.2, 0.18); o.connect(f); o2.connect(f); f.connect(g); g.connect(master);
-    },
-    tingle() {
-      if (!init()) return; const t = ctx.currentTime;
-      for (let i = 0; i < 7; i++) {
-        const tt = t + i * 0.045, o = O('sine', 1700 + Math.random() * 1700, tt, tt + 0.5), g = G(0);
-        env(g, tt, 0.004, 0.09, 0.02, 0.35); o.connect(g); g.connect(master); g.connect(revSend);
-      }
-    },
-    boom() {
-      if (!init()) return; const t = ctx.currentTime;
-      const s = N(t, t + 1.6), f = F('lowpass', 500), g = G(0);
-      f.frequency.exponentialRampToValueAtTime(90, t + 1.3);
-      env(g, t, 0.005, 0.9, 0.1, 1.3); s.connect(f); f.connect(g); g.connect(master);
-      const o = O('sine', 90, t, t + 1), g2 = G(0);
-      o.frequency.exponentialRampToValueAtTime(28, t + 0.8);
-      env(g2, t, 0.005, 0.8, 0.05, 0.8); o.connect(g2); g2.connect(master);
-    },
-    fanfare() {
-      if (!init()) return; const t = ctx.currentTime;
-      [67, 71, 74, 79].forEach((m, i) => brass(master, t + i * 0.1, i === 3 ? 0.5 : 0.08, [m, m - 12], 0.1));
-      for (let i = 0; i < 10; i++) { const tt = t + 0.3 + Math.random() * 0.5; hiss(master, tt, 0.03, 3000, 0.15); }
-    },
-    whoosh() {
-      if (!init()) return; const t = ctx.currentTime;
-      const s = N(t, t + 0.9), f = F('bandpass', 300, 1.5), g = G(0);
-      f.frequency.exponentialRampToValueAtTime(3500, t + 0.6);
-      env(g, t, 0.25, 0.3, 0.1, 0.4); s.connect(f); f.connect(g); g.connect(master);
-    },
-  };
-
-  return {
-    init, resume, playSong, stopSong, songBeat, sfx, LINES, SYL, VOCAL_START, SONG_BEATS, SPB, BPM,
-    get ctx() { return ctx; }, get master() { return master; },
-    toggleMute() { muted = !muted; if (muted) stopSpeech(); if (master) master.gain.setTargetAtTime(muted ? 0 : 0.85, ctx.currentTime, 0.03); return muted; },
-  };
+  return { LINES, SYL, SPB, VOCAL_START, SONG_BEATS };
 })();
 
 /* ======================================================================
@@ -1060,7 +750,6 @@ const PANELS = [
   {
     W: 400, H: 300, words: ['!!', 'TINGLE!', 'ZING!'],
     init(p) { p.turn = 0; p.squint = 0; },
-    click(p) { Sound.sfx.tingle(); },
     build(p, S, now, dt) {
       const { W, H } = p;
       S.shape(rect(0, 0, W, H), { fill: '#ffd23a', bw: '#ffffff', sketch: false, noInk: true });
@@ -1155,7 +844,6 @@ const PANELS = [
       p.look = [0, 0];
     },
     click(p, x, y, now) {
-      Sound.sfx.laser();
       p.fx.push({ type: 'laser', from: p.eye, to: [x, y], t0: now, life: 0.4 });
       p.fx.push({ type: 'scorch', x, y, t0: now, life: 5 });
       particles(p, x, y, 14, 'spark', { speed: 220, life: 0.6 });
@@ -1190,7 +878,6 @@ const PANELS = [
     click(p, x, y, now) {
       if (p.koT0 != null) return;
       p.kickT0 = now; p.recoilT0 = now + 0.1; p.hits++;
-      Sound.sfx.pow();
       p.shakeT0 = now;
       const ip = p.chest || [300, 200];
       particles(p, ip[0], ip[1], 8, 'bolt', { speed: 260, dir: -0.6, spread: 2.2, life: 1.2, g: 600 });
@@ -1198,7 +885,7 @@ const PANELS = [
       p.dents.push([(Math.random() - 0.5) * 60, -70 - Math.random() * 50, 6]);
       if (p.hits >= 5) {
         p.koT0 = now;
-        setTimeout(() => { Sound.sfx.boom(); burst(p, 300, 150, 'KRA-KOOM!', 70); p.shakeT0 = perfNow(); }, 250);
+        setTimeout(() => { burst(p, 300, 150, 'KRA-KOOM!', 70); p.shakeT0 = perfNow(); }, 250);
       }
     },
     build(p, S, now, dt) {
@@ -1243,7 +930,6 @@ const PANELS = [
       p.webs = Array.from({ length: 16 }, () => [[-60 + r() * 120, -200 + r() * 60], [-60 + r() * 120, -120 + r() * 120]]);
     },
     click(p, x, y) {
-      Sound.sfx.fanfare();
       particles(p, x, y, 40, 'firework', { speed: 260, life: 1.2, g: 120 });
       particles(p, x, y, 24, 'confetti', { speed: 180, life: 2, g: 160 });
     },
@@ -1294,7 +980,7 @@ function stageFor(i, b) {
 const FULL = { sketch: 1, ink: 1, color: 1, halftone: 1, sketchAlpha: 0 };
 
 let artStart = null; // perf time when the art timeline began
-const artBeat = () => (artStart == null ? 0 : (perfNow() - artStart) / Sound.SPB);
+const artBeat = () => (artStart == null ? 0 : (perfNow() - artStart) / Song.SPB);
 
 /* ======================================================================
  * DOM, styles, panels
@@ -1401,13 +1087,12 @@ function makePanel(def, index, grid) {
   cv.addEventListener('pointerdown', e => {
     const [x, y] = panelCoords(p, e);
     p.mx = x; p.my = y;
-    Sound.init(); Sound.resume();
     const now = perfNow();
     p.splashes.push({ x, y, t0: now, R: p.wide ? 170 : 120, seed: (Math.random() * 1000) | 0 });
     if (p.splashes.length > 12) p.splashes.shift();
     p.joltT0 = now;
     burst(p, x, y, pick(p.words), p.wide ? 50 : 42, now);
-    if (p.web) { Sound.sfx.thwip(); p.fx.push({ type: 'web', from: () => p.hand || [x, y], to: [x, y], t0: now, life: 2.6 }); }
+    if (p.web) { p.fx.push({ type: 'web', from: () => p.hand || [x, y], to: [x, y], t0: now, life: 2.6 }); }
     p.click && p.click(p, x, y, now);
   });
 
@@ -1427,7 +1112,7 @@ function renderPanel(p, now, beat, songBeat) {
   p.hoverAmt = approach(p.hoverAmt, p.hover ? 1 : 0, dt * 7);
   if (!p.visible) return;
   const st = stageFor(p.index, beat);
-  const beatBob = songBeat != null && songBeat < Sound.SONG_BEATS ? Math.pow(1 - (songBeat % 1), 3) : 0;
+  const beatBob = songBeat != null && songBeat < Song.SONG_BEATS ? Math.pow(1 - (songBeat % 1), 3) : 0;
 
   const S = new Scene();
   p.build(p, S, now, dt, beatBob);
@@ -1486,7 +1171,7 @@ function buildLyricLine(li) {
   lyricsEl.querySelectorAll('.line').forEach(n => n.remove());
   const div = document.createElement('div'); div.className = 'line';
   lineSpans = [];
-  Sound.LINES[li].forEach(([syl, vow]) => {
+  Song.LINES[li].forEach(([syl, vow]) => {
     if (!vow) { lineSpans.push(null); return; }
     const sp = document.createElement('span');
     // "~" joins syllables of one word; a trailing "-" is a real hyphen (Spider-Man)
@@ -1503,13 +1188,13 @@ function setLyricMessage(msg) {
   lyricsEl.appendChild(d); spiderEl.style.opacity = 0;
 }
 function updateLyrics(sb) {
-  if (sb == null || sb > Sound.SONG_BEATS) { setLyricMessage('<span class="done">🕷 Press ♪ SING for the theme song 🕷</span>'); return; }
-  const vb = sb - Sound.VOCAL_START;
+  if (sb == null || sb > Song.SONG_BEATS) { setLyricMessage('<span class="done">🕷 Press ↺ REDRAW to watch it again 🕷</span>'); return; }
+  const vb = sb - Song.VOCAL_START;
   if (vb < 0) { setLyricMessage('<span class="on">♪ ♫ ♪ ♫ ♪</span>'); return; }
   let cur = -1;
-  for (let i = 0; i < Sound.SYL.length; i++) if (Sound.SYL[i].b0 <= vb) cur = i; else break;
+  for (let i = 0; i < Song.SYL.length; i++) if (Song.SYL[i].b0 <= vb) cur = i; else break;
   if (cur < 0) return;
-  const syl = Sound.SYL[cur];
+  const syl = Song.SYL[cur];
   if (syl.li !== lyricLineIdx) { lyricLineIdx = syl.li; buildLyricLine(syl.li); lyricSylIdx = -2; }
   const active = vb < syl.b0 + syl.dur;
   const key = cur * 2 + (active ? 1 : 0);
@@ -1528,9 +1213,7 @@ function updateLyrics(sb) {
 /* ---------- boot ---------- */
 function start() {
   panels.forEach(p => { p.fx = []; p.splashes = []; });
-  const t0 = Sound.playSong();
-  const lead = t0 != null ? t0 - Sound.ctx.currentTime : 0.1;
-  artStart = perfNow() + lead;
+  artStart = perfNow() + 0.1;
 }
 
 function boot() {
@@ -1539,29 +1222,26 @@ function boot() {
   const grid = document.createElement('div'); grid.className = 'grid';
   book.appendChild(grid);
   const foot = document.createElement('div'); foot.className = 'foot';
-  foot.innerHTML = '<span><b>HOVER</b> to make panels react · <b>CLICK</b> to splash colour, shoot webs & throw punches</span><span>Drawn, inked, coloured &amp; sung live — 100% JavaScript</span>';
+  foot.innerHTML = '<span><b>HOVER</b> to make panels react · <b>CLICK</b> to splash colour, shoot webs & throw punches</span><span>Drawn, inked &amp; coloured live — 100% JavaScript</span>';
   book.appendChild(foot);
   document.body.appendChild(book);
   PANELS.forEach((d, i) => panels.push(makePanel(d, i, grid)));
 
   const bar = document.createElement('div'); bar.className = 'bar';
   const mk = (label, fn, title) => { const b = document.createElement('button'); b.textContent = label; b.title = title; b.onclick = fn; bar.appendChild(b); return b; };
-  mk('♪ SING', () => { Sound.playSong(); }, 'Play the theme song');
-  mk('↺ REDRAW', () => { Sound.sfx.whoosh(); start(); }, 'Start again from pencils');
+  mk('↺ REDRAW', () => { start(); }, 'Start again from pencils');
   lyricsEl = document.createElement('div'); lyricsEl.className = 'lyrics';
   spiderEl = document.createElement('span'); spiderEl.className = 'spider'; spiderEl.textContent = '🕷';
   lyricsEl.appendChild(spiderEl);
   bar.appendChild(lyricsEl);
-  const muteBtn = mk('🔊', () => { muteBtn.textContent = Sound.toggleMute() ? '🔇' : '🔊'; }, 'Mute / unmute');
   document.body.appendChild(bar);
 
   const cover = document.createElement('div'); cover.className = 'cover';
   cover.innerHTML = `<div class="card"><h1>THE AMAZING<br>SPIDER-MAN</h1>
-    <p>A live comic that draws itself — pencils, inks, colours — while it <b>sings you its theme song</b>.</p>
-    <button type="button">▶ OPEN THE COMIC</button><p style="font-size:13px;margin:14px 0 0">🔊 Sound on for the full experience</p></div>`;
+    <p>A live comic that draws itself — pencils, inks, colours — while its theme song scrolls along the bottom.</p>
+    <button type="button">▶ OPEN THE COMIC</button></div>`;
   document.body.appendChild(cover);
   cover.querySelector('button').onclick = () => {
-    Sound.init(); Sound.resume(); Sound.sfx.whoosh();
     cover.remove();
     start();
   };
@@ -1569,13 +1249,13 @@ function boot() {
   if (document.fonts && document.fonts.load) { document.fonts.load('20px Bangers'); document.fonts.load('700 16px "Comic Neue"'); }
 
   const frame = () => {
-    const now = perfNow(), beat = artBeat(), sb = Sound.songBeat();
+    const now = perfNow(), beat = artBeat(), sb = artStart == null ? null : beat;
     for (const p of panels) renderPanel(p, now, beat, sb);
     updateLyrics(sb);
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
-  window.__comic = { Sound, panels, start, artBeat, setBeat: b => { artStart = perfNow() - b * Sound.SPB; } };
+  window.__comic = { panels, start, artBeat, setBeat: b => { artStart = perfNow() - b * Song.SPB; } };
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
