@@ -725,7 +725,7 @@ const Sound = (() => {
       lg.connect(o.frequency);
       o.connect(g);
     }
-    const vo = G(1.5);
+    const vo = G(0.9);
     const gains = [1, 0.6, 0.32], bws = [80, 100, 140];
     A.forEach((Fq, k) => {
       const b = F('bandpass', Fq, Fq / bws[k]);
@@ -816,6 +816,56 @@ const Sound = (() => {
   const SYL = [];
   { let b = 0; LINES.forEach((line, li) => line.forEach((n, si) => { if (n[1]) SYL.push({ li, si, b0: b, dur: n[3] }); b += n[3]; })); }
 
+  /* ---- the words: the browser's speech voice sings each phrase in time,
+   * pitched to the tune, over the formant "choir" voice ---- */
+  const PHRASES = [];
+  {
+    let b = 0;
+    LINES.forEach(line => line.forEach(([syl, vow, m, d]) => {
+      if (vow) {
+        const k = Math.floor(b / 4);
+        let ph = PHRASES[PHRASES.length - 1];
+        if (!ph || ph.k !== k) { ph = { k, b0: b, b1: b, say: '', syl: 0, top: 0 }; PHRASES.push(ph); }
+        ph.say += syl.endsWith('~') ? syl.slice(0, -1) : syl.endsWith('-') ? syl : syl + ' ';
+        ph.syl++; ph.b1 = b + d; ph.top = Math.max(ph.top, m);
+      }
+      b += d;
+    }));
+    PHRASES.forEach(ph => { ph.say = ph.say.replace('MAAAN', 'Man').trim(); });
+  }
+  const canSpeak = 'speechSynthesis' in window && typeof SpeechSynthesisUtterance === 'function';
+  let voice = null, speechTimers = [];
+  function pickVoice() {
+    const vs = speechSynthesis.getVoices();
+    voice = vs.find(v => /^en[-_]US/i.test(v.lang) && /Google|Samantha|Aria|Jenny|Guy|Alex/i.test(v.name)) ||
+      vs.find(v => /^en[-_]US/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
+  }
+  if (canSpeak) { pickVoice(); speechSynthesis.addEventListener?.('voiceschanged', pickVoice); }
+  function stopSpeech() {
+    speechTimers.forEach(clearTimeout); speechTimers = [];
+    if (canSpeak) try { speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+  }
+  function scheduleSpeech(t0) {
+    if (!canSpeak) return;
+    // unlock speech inside the click (iOS/Safari need this)
+    try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); } catch (e) { /* ignore */ }
+    for (const ph of PHRASES) {
+      const dur = (ph.b1 - ph.b0) * SPB, last = ph === PHRASES[PHRASES.length - 1];
+      const at = (t0 + (VOCAL_START + ph.b0) * SPB - ctx.currentTime) * 1000 - 80;
+      speechTimers.push(setTimeout(() => {
+        if (muted) return;
+        const u = new SpeechSynthesisUtterance(ph.say);
+        if (voice) u.voice = voice;
+        u.lang = 'en-US';
+        u.rate = last ? 0.75 : clamp(ph.syl / (dur * 4.2), 0.75, 1.6);
+        u.pitch = clamp(0.8 + ((ph.top - 65) / 14) * 0.9, 0.5, 2);
+        u.volume = 1;
+        speechSynthesis.cancel();
+        speechSynthesis.speak(u);
+      }, Math.max(0, at)));
+    }
+  }
+
   function playSong() {
     if (!init()) return null;
     resume();
@@ -856,9 +906,11 @@ const Sound = (() => {
       prev = m; b += d;
     }
     songT0 = t0;
+    scheduleSpeech(t0);
     return t0;
   }
   function stopSong() {
+    stopSpeech();
     if (!songBus) return;
     const old = songBus; songBus = null;
     old.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
@@ -922,7 +974,7 @@ const Sound = (() => {
   return {
     init, resume, playSong, stopSong, songBeat, sfx, LINES, SYL, VOCAL_START, SONG_BEATS, SPB, BPM,
     get ctx() { return ctx; }, get master() { return master; },
-    toggleMute() { muted = !muted; if (master) master.gain.setTargetAtTime(muted ? 0 : 0.85, ctx.currentTime, 0.03); return muted; },
+    toggleMute() { muted = !muted; if (muted) stopSpeech(); if (master) master.gain.setTargetAtTime(muted ? 0 : 0.85, ctx.currentTime, 0.03); return muted; },
   };
 })();
 

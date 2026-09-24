@@ -5,7 +5,7 @@ Open `index.html` in a browser and click **Open the comic**. Turn the sound on.
 
 - **It draws itself in time with the song.** The panels start as rough pencils with construction lines and hatching.
   Then they get inked in black & white, fill with colour panel by panel, and switch to Ben-Day halftone on the last big note.
-- **It sings.** A Web Audio formant synthesiser sings an original theme song with vowel shapes and consonant hiss.
+- **It sings.** The browser's speech voice sings the words of an original theme song, in time and pitched to the tune, over a Web Audio formant "choir" voice.
   A synth band (brass stabs, bass, drums) backs it, and karaoke-style lyrics scroll in the bottom bar.
 - **Hover:** panels tilt. Spider-Man aims his web-shooter and turns his eyes toward your cursor.
   Spider-sense tingles get stronger, Scrapjaw's targeting laser follows you, and hidden speech balloons appear.
